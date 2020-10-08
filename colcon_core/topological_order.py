@@ -4,6 +4,7 @@
 from collections import OrderedDict
 
 from colcon_core.package_decorator import PackageDecorator
+from colcon_core.package_descriptor import DependencyWalker
 
 
 def topological_order_packages(
@@ -21,11 +22,13 @@ def topological_order_packages(
     """
     # get recursive dependencies for all packages
     queued = set()
+    walker = DependencyWalker(descriptors, recursive_categories)
     for descriptor in descriptors:
         rec_deps = descriptor.get_recursive_dependencies(
             descriptors,
             direct_categories=direct_categories,
-            recursive_categories=recursive_categories)
+            recursive_categories=recursive_categories,
+            walker=walker)
         d = _PackageDependencies(
             descriptor=descriptor,
             recursive_dependencies=rec_deps,

@@ -85,6 +85,7 @@ class PackageDescriptor:
 
     def get_recursive_dependencies(
         self, descriptors, direct_categories=None, recursive_categories=None,
+        walker=None
     ):
         """
         Get the recursive dependencies.
@@ -102,38 +103,12 @@ class PackageDescriptor:
         :rtype: set[DependencyDescriptor]
         :raises AssertionError: if a package lists itself as a dependency
         """
-        # the following variable only exists for faster access within the loop
-        descriptors_by_name = defaultdict(set)
-        for d in descriptors:
-            descriptors_by_name[d.name].add(d)
-        queue = self.get_dependencies(categories=direct_categories)
-        dependencies = set()
-        depth = 0
-        while queue:
-            # ignore redundant dependencies
-            level_queue = queue - dependencies
-            queue.clear()
-            depth += 1
-            for dep in level_queue:
-                # ignore circular dependencies
-                if dep == self.name:
-                    continue
-                # ignore unknown dependencies
-                # explicitly allow multiple packages with the same name
-                descs = descriptors_by_name[dep]
-                if not descs:
-                    continue
-                # recursing into the same function of the dependency descriptor
-                # queue recursive dependencies
-                for d in descs:
-                    queue |= d.get_dependencies(
-                        categories=recursive_categories)
-                # duplicate the descriptor and metadata and add the depth
-                dep = deepcopy(dep)
-                dep.metadata['depth'] = depth
-                # add dependency to result set
-                dependencies.add(dep)
-        return dependencies
+        # If there wasn't a walker passed in, create a single-use one here.
+        if not walker:
+            walker = DependencyWalker(descriptors, categories=recursive_categories)
+        direct_dependencies = self.get_dependencies(categories=direct_categories)
+        recursive_dependencies = walker.get_recursive_dependencies(*direct_dependencies)
+        return recursive_dependencies
 
     def __hash__(self):  # noqa: D105
         # the hash doesn't include the path since different paths are
@@ -154,3 +129,30 @@ class PackageDescriptor:
     def __str__(self):  # noqa: D105
         return '{' + ', '.join(
             ['%s: %s' % (s, getattr(self, s)) for s in self.__slots__]) + '}'
+
+
+class DependencyWalker:
+    def __init__(self, descriptors, categories):
+        oself = self
+        class DependencyCache(defaultdict):
+            def __missing__(self, key):
+                dependency_set = set()
+                if key in oself.descriptors_by_name:
+                    dependency_set.add(key)
+                    for descriptor in oself.descriptors_by_name[key]:
+                        dependencies = descriptor.get_dependencies(categories=oself.categories)
+                        recursive_deps = oself.get_recursive_dependencies(*dependencies)
+                        dependency_set.update(recursive_deps)
+                self[key] = dependency_set
+                return dependency_set
+        self.categories = categories
+        self.dependency_cache = DependencyCache()
+        self.descriptors_by_name = defaultdict(set)
+        for d in descriptors:
+            self.descriptors_by_name[d.name].add(d)
+
+    def get_recursive_dependencies(self, *dependency_descriptors):
+        total_dependency_set = set()
+        for dep in dependency_descriptors:
+            total_dependency_set.update(self.dependency_cache[dep])
+        return total_dependency_set
